@@ -343,11 +343,7 @@ class RequestHandler {
               for (auto t : tries) {
                 try {
                   Response r = t.value();
-                  if (r.output_is_default_) {
-                    app_metrics.default_pred_ratio_->increment(1, 1);
-                  } else {
-                    app_metrics.default_pred_ratio_->increment(0, 1);
-                  }
+                  app_metrics.default_pred_ratio_->increment(1, 1);
                   app_metrics.latency_->insert(r.duration_micros_);
                   app_metrics.num_predictions_->increment(1);
                   app_metrics.throughput_->mark(1);
@@ -474,28 +470,18 @@ class RequestHandler {
     json_response.SetObject();
     clipper::json::add_long(json_response, PREDICTION_RESPONSE_KEY_QUERY_ID,
                             query_response.query_id_);
-    rapidjson::Document json_y_hat;
-    std::string y_hat_str = parse_output_y_hat(query_response.output_.y_hat_);
+    rapidjson::Document combined_output;
     try {
-      // Attempt to parse the string output as JSON
-      // and, if possible, nest it in object form within the
-      // query response
-      clipper::json::parse_json(y_hat_str, json_y_hat);
-      clipper::json::add_object(json_response, PREDICTION_RESPONSE_KEY_OUTPUT,
-                                json_y_hat);
+        // Attempt to parse the string output as JSON
+        // and, if possible, nest it in object form within the
+        // query response
+        clipper::json::parse_json(query_response.combined_output_.combined_output_, combined_output);
+        clipper::Json::add_object(json_response, "combiner_output", combined_output);
     } catch (const clipper::json::json_parse_error& e) {
-      // If the string output is not JSON-formatted, include
-      // it as a JSON-safe string value in the query response
-      clipper::json::add_string(json_response, PREDICTION_RESPONSE_KEY_OUTPUT,
-                                y_hat_str);
-    }
-    clipper::json::add_bool(json_response, PREDICTION_RESPONSE_KEY_USED_DEFAULT,
-                            query_response.output_is_default_);
-    if (query_response.output_is_default_ &&
-        query_response.default_explanation_) {
-      clipper::json::add_string(json_response,
-                                PREDICTION_RESPONSE_KEY_DEFAULT_EXPLANATION,
-                                query_response.default_explanation_.get());
+        // If the string output is not JSON-formatted, include
+        // it in the query response
+        clipper::json::add_string(json_response, "combiner_output",
+                                  query_response.combined_output_.combined_output_);
     }
     std::string content = clipper::json::to_json_string(json_response);
     return content;

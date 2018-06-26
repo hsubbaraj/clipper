@@ -15,6 +15,7 @@
 #include "selection_policies.hpp"
 #include "task_executor.hpp"
 #include "timers.hpp"
+#include "zmq.hpp"
 
 namespace clipper {
 
@@ -44,6 +45,9 @@ class QueryProcessor {
   std::shared_ptr<StateDB> state_db_;
   TaskExecutor task_executor_;
   TimerSystem<HighPrecisionClock> timer_system_{HighPrecisionClock()};
+  zmq::context_t context;
+  zmq::socket_t send_sock;
+  zmq::socket_t rcv_sock;
   // This is a heteregenous container of different instances of selection
   // policy. The key is the name of the specific selection policy, the value is
   // an instance of that policy. All SelectionPolicy implementations (derived

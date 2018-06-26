@@ -55,6 +55,8 @@ std::string VersionedModelId::get_name() const { return name_; }
 
 std::string VersionedModelId::get_id() const { return id_; }
 
+std::string VersionedModelId::get_json_string() const { return "{\"name\":\"" + name_ + "\", \"id\":\"" + id_ + "\"}";}
+
 std::string VersionedModelId::serialize() const {
   std::stringstream ss;
   ss << name_;
@@ -93,6 +95,51 @@ bool Output::operator==(const Output &rhs) const {
 bool Output::operator!=(const Output &rhs) const {
   return !(y_hat_ == rhs.y_hat_ && models_used_ == rhs.models_used_);
 }
+
+std::string Output::get_json_string() {
+  std::string json = "{\"models_used\":[";
+  for (std::vector<VersionedModelId>::iterator i = models_used_.begin(); i != models_used_.end(); i++) {
+    json += (*i).get_json_string();
+    if (i + 1 != models_used_.end()) {
+      json += ", ";
+    } else {
+      json += "], \"preds\":[";
+    }
+  }
+  void* output_data = get_data<void>(y_hat_).get();
+  for (int i = 0; i < y_hat_.get()->size(); i++) {
+    switch(y_hat_.get()->type()) {
+      case DataType::Ints:
+        json += *static_cast<int*>(output_data);
+        output_data = (static_cast<int*>(output_data) + 1);
+        break;
+      case DataType::Doubles:
+        json += *static_cast<double*>(output_data);
+        output_data = (static_cast<double*>(output_data) + 1);
+        break;
+      case DataType::Strings:
+        json += *static_cast<std::string*>(output_data);
+        output_data = (static_cast<std::string*>(output_data) + 1);
+        break;
+      case DataType::Floats:
+        json += *static_cast<float*>(output_data);
+        output_data = (static_cast<float*>(output_data) + 1);
+        break;
+      case DataType::Bytes:
+        json += *static_cast<unsigned char*>(output_data);
+        output_data = (static_cast<unsigned char*>(output_data) + 1);
+        break;
+    }
+    if (i < y_hat_.get()->size() - 1) {
+      json += ", ";
+    } else {
+      json += "]}";
+    }
+  }
+  return json;
+}
+
+CombinedOutput::CombinedOutput(std::string combined_output) : combined_output_(combined_output) {}
 
 std::unique_ptr<SerializableString> to_serializable_string(
     const std::string &str) {
@@ -234,14 +281,60 @@ Query::Query(std::string label, long user_id,
       candidate_models_(std::move(candidate_models)),
       create_time_(std::chrono::high_resolution_clock::now()) {}
 
-Response::Response(Query query, QueryId query_id, const long duration_micros,
-                   Output output, const bool output_is_default,
+std::string Query::get_json_string(std::string msg) {
+  std::string json = "{\"label\":\"" + label_ + "\", \"user_id\":" + user_id_ + ", \"latency_budget\":" + latency_budget_micros_
+          + ", \"selection_policy\":\"" + selection_policy_ + "\", \"msg\":\"" + msg + "\", \"candidate_models\":";
+  std::string model_list = "[";
+  for(std::vector<VersionedModelId>::iterator i = candidate_models_.begin(); i != candidate_models_.end(); ++i) {
+    model_list += (*i).get_json_string();
+    if (i + 1 != candidate_models_.end()) {
+      model_list += ", ";
+    } else {
+      model_list += "]";
+    }
+  }
+  json += model_list;
+  json += ", \"data\": [";
+  void* input_data = get_data<void>(input_).get();
+  for (int i = 0; i < input_.get()->size(); i++) {
+    switch(input_.get()->type()) {
+      case DataType::Ints:
+        json += *static_cast<int*>(input_data);
+        input_data = (static_cast<int*>(input_data) + 1);
+        break;
+      case DataType::Doubles:
+        json += *static_cast<double*>(input_data);
+        input_data = (static_cast<double*>(input_data) + 1);
+        break;
+      case DataType::Strings:
+        json += *static_cast<std::string*>(input_data);
+        input_data = (static_cast<std::string*>(input_data) + 1);
+        break;
+      case DataType::Floats:
+        json += *static_cast<float*>(input_data);
+        input_data = (static_cast<float*>(input_data) + 1);
+        break;
+      case DataType::Bytes:
+        json += *static_cast<unsigned char*>(input_data);
+        input_data = (static_cast<unsigned char*>(input_data) + 1);
+        break;
+    }
+    if (i < input_.get()->size() - 1) {
+      json += ", ";
+    } else {
+      json += "]}";
+    }
+  }
+  return json;
+}
+
+Response::Response(Query query, QueryId query_id, CombinedOutput output,
+                   const long duration_micros,
                    const boost::optional<std::string> default_explanation)
     : query_(std::move(query)),
       query_id_(query_id),
       duration_micros_(duration_micros),
-      output_(std::move(output)),
-      output_is_default_(output_is_default),
+      combined_output_(std::move(output)),
       default_explanation_(default_explanation) {}
 
 std::string Response::debug_string() const noexcept {

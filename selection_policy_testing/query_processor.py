@@ -1,21 +1,20 @@
-import socket
 import json
 import time
 import threading
+import zmq
 from collections import deque
 
 class Sender(threading.Thread):
     def __init__(self, que, sock):
         super(Sender, self).__init__()
         self.q = que
-        sock.listen(1)
-        self.sock, a = sock.accept()
+        self.sock = sock
 
     def run(self):
         while True:
             if len(self.q) > 0:
-                query = json.dumps(self.q.popleft())
-                self.sock.send(query.encode('utf-8'))
+                query = self.q.popleft()
+                self.sock.send_json(query)
 
 def query_generator(count):
     a = count % 2 == 0
@@ -42,17 +41,11 @@ class Reciever(threading.Thread):
         super(Reciever, self).__init__()
         self.fq = final_q
         self.eq = exec_q
-        sock.listen(1)
-        self.sock, a = sock.accept()
+        self.sock = sock
 
     def run(self):
         while True:
-            a = self.sock.recv(1).decode('utf-8')
-            q = '' + str(a)
-            while a != '}':
-                a = self.sock.recv(1).decode('utf-8')
-                q = q + str(a)
-            query = json.loads(q)
+            query = self.sock.recv_json()
             if query['msg'] == 'exec':
                 self.eq.append(query)
             elif query['msg'] == 'return':
@@ -88,17 +81,16 @@ class Client(threading.Thread):
                 query = self.qd[q['id']]
                 id = query['query_id']
                 correct = (id % 2 == 0 and q['final_pred'] == 4) or (id % 2 == 1 and q['final_pred'] == 6)
-                if correct:
-                    print('Query', id, 'outputted correctly!')
-                else:
+                if not correct:
                     print('Query', id, 'FAILED!')
                 del self.qd[id]
 
 if __name__ == '__main__':
-    sel_sock = socket.socket()
-    sel_sock.bind((socket.gethostname(), 8080))
-    send_s = socket.socket()
-    send_s.bind((socket.gethostname(), 8083))
+    ctx = zmq.Context()
+    sel_sock = ctx.socket(zmq.PAIR)
+    sel_sock.bind('tcp://*:8080')
+    send_s = ctx.socket(zmq.PAIR)
+    send_s.bind('tcp://*:8083')
     qs = dict()
     queries = deque()
     exec_queue = deque()

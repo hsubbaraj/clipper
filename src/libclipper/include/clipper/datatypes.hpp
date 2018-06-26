@@ -52,6 +52,7 @@ class VersionedModelId {
 
   std::string get_name() const;
   std::string get_id() const;
+  std::string get_json_string() const;
   std::string serialize() const;
   static VersionedModelId deserialize(std::string);
 
@@ -239,6 +240,8 @@ class Query {
   Query(Query &&) = default;
   Query &operator=(Query &&) = default;
 
+  std::string get_json_string(std::string msg);
+
   // Used to provide a namespace for queries. The expected
   // use is to distinguish queries coming from different
   // REST endpoints.
@@ -272,16 +275,37 @@ class Output {
   bool operator==(const Output &rhs) const;
   bool operator!=(const Output &rhs) const;
 
+  std::string get_json_string();
+
   std::shared_ptr<PredictionData> y_hat_;
   std::vector<VersionedModelId> models_used_;
+};
+
+class CombinedOutput {
+  public:
+   CombinedOutput(std::string combined_output);
+
+   ~CombinedOutput() = default;
+
+    explicit CombinedOutput() = default;
+    CombinedOutput(const CombinedOutput &) = default;
+    CombinedOutput &operator=(const CombinedOutput &) = default;
+
+    CombinedOutput(CombinedOutput &&) = default;
+    CombinedOutput &operator=(CombinedOutput &&) = default;
+
+    bool operator==(const CombinedOutput &rhs) const;
+    bool operator!=(const CombinedOutput &rhs) const;
+
+    std::string combined_output_;
 };
 
 class Response {
  public:
   ~Response() = default;
 
-  Response(Query query, QueryId query_id, const long duration_micros,
-           Output output, const bool is_default,
+  Response(Query query, QueryId query_id, CombinedOuput output,
+           const long duration_micros,
            const boost::optional<std::string> default_explanation);
 
   // default copy constructors
@@ -297,8 +321,7 @@ class Response {
   Query query_;
   QueryId query_id_;
   long duration_micros_;
-  Output output_;
-  bool output_is_default_;
+  CombinedOutput combined_output_;
   boost::optional<std::string> default_explanation_;
 };
 

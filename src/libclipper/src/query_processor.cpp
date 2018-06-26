@@ -5,6 +5,7 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <vector>
 
 #define PROVIDES_EXECUTORS
 #include <boost/exception_ptr.hpp>
@@ -28,11 +29,19 @@
 
 using std::tuple;
 using std::vector;
+using zmq::context_t;
+using zmq::socket_t;
+using zmq::message_t;
 
 namespace clipper {
 
 QueryProcessor::QueryProcessor() : state_db_(std::make_shared<StateDB>()) {
   // Create selection policy instances
+  context = context_t(1);
+  send_sock = socket_t(context, ZMQ_PAIR);
+  rcv_sock = socket_t(context, ZMQ_PAIR);
+  send_sock.bind("tcp://*:8080");
+  rcv_sock.bind("tcp://*:8083");
   selection_policies_.emplace(DefaultOutputSelectionPolicy::get_name(),
                               std::make_shared<DefaultOutputSelectionPolicy>());
   log_info(LOGGING_TAG_QUERY_PROCESSOR, "Query Processor started");
@@ -44,32 +53,28 @@ std::shared_ptr<StateDB> QueryProcessor::get_state_table() const {
 
 folly::Future<Response> QueryProcessor::predict(Query query) {
   long query_id = query_counter_.fetch_add(1);
-  auto current_policy_iter = selection_policies_.find(query.selection_policy_);
-  if (current_policy_iter == selection_policies_.end()) {
-    std::stringstream err_msg_builder;
-    err_msg_builder << query.selection_policy_ << " "
-                    << "is an invalid selection_policy.";
-    const std::string err_msg = err_msg_builder.str();
-    log_error(LOGGING_TAG_QUERY_PROCESSOR, err_msg);
-    throw PredictError(err_msg);
+  std::string query_json = query.get_json_string("select");
+  message_t msg(query_json.length());
+  memcpy ( (void *) msg.data(), query_json.c_str(), query_json.length());
+  send_sock.send(msg);
+  message_t responsem;
+  rcv_sock.recv(&responsem);
+  auto q_id = std::string(static_cast<char*>(responsem.data()), responsem.size());
+  int more;
+  size_t more_size = sizeof(more);
+  rcv_sock.getsockopt(ZMQ_RCVMORE, &more, &more_size);
+  std::vector<std::string> candidate_model_ids;
+  while (more) {
+    rcv_sock.recv(&responsem);
+    candidate_model_ids.push_back(std::string(static_cast<char*>(responsem.data()), responsem.size()));
+    rcv_sock.getsockopt(ZMQ_RCVMORE, &more, &more_size);
   }
-  std::shared_ptr<SelectionPolicy> current_policy = current_policy_iter->second;
-
-  auto state_opt = state_db_->get(StateKey{query.label_, query.user_id_, 0});
-  if (!state_opt) {
-    std::stringstream err_msg_builder;
-    err_msg_builder << "No selection state found for query with user_id: "
-                    << query.user_id_ << " and label: " << query.label_;
-    const std::string err_msg = err_msg_builder.str();
-    log_error(LOGGING_TAG_QUERY_PROCESSOR, err_msg);
-    throw PredictError(err_msg);
+  std::vector<PredictTask> tasks;
+  for(std::vector<std::string>::iterator it = candidate_model_ids.begin(); it != candidate_model_ids.end(); ++it) {
+    tasks.emplace_back(query.input_, *it, 1.0, q_id, query.latency_budget_micros_);
   }
-  std::shared_ptr<SelectionState> selection_state =
-      current_policy->deserialize(*state_opt);
 
   boost::optional<std::string> default_explanation;
-  std::vector<PredictTask> tasks =
-      current_policy->select_predict_tasks(selection_state, query, query_id);
 
   log_info_formatted(LOGGING_TAG_QUERY_PROCESSOR, "Found {} tasks",
                      tasks.size());
@@ -123,8 +128,7 @@ folly::Future<Response> QueryProcessor::predict(Query query) {
   folly::Future<Response> response_future = response_promise.getFuture();
 
   response_ready_future.then([
-    outputs_ptr, outputs_mutex, num_tasks, query, query_id, selection_state,
-    current_policy, response_promise = std::move(response_promise),
+    outputs_ptr, outputs_mutex, num_tasks, query, query_id, response_promise = std::move(response_promise),
     default_explanation
   ](const std::pair<size_t,
                     folly::Try<folly::Unit>>& /* completed_future */) mutable {
@@ -134,9 +138,23 @@ folly::Future<Response> QueryProcessor::predict(Query query) {
           "Failed to retrieve a prediction response within the specified "
           "latency SLO";
     }
-
-    std::pair<Output, bool> final_output = current_policy->combine_predictions(
-        selection_state, query, *outputs_ptr);
+    std::string response_json = "{\"query_id\":" + query_id + ", \"msg\": \"combine\","
+                              + " \"preds\":[";
+    std::vector<Output> * output_vec = outputs_ptr.get();
+    for (std::vector<Output>::iterator it = output_vec->begin(); it != output_vec->end(); it++) {
+      response_json += it->get_json_string();
+      if (it != output_vec->end() - 1) {
+        response_json += ", ";
+      } else {
+        response_json += "]}";
+      }
+    }
+    message_t msg(response_json.length());
+    memcpy ( (void *) msg.data(), response_json.c_str(), response_json.length());
+    send_sock.send(msg);
+    message_t responsem;
+    rcv_sock.recv(&responsem);
+    CombinedOutput final_output{std::string(static_cast<char*>(responsem.data()), responsem.size())};
 
     std::chrono::time_point<std::chrono::high_resolution_clock> end =
         std::chrono::high_resolution_clock::now();
@@ -147,9 +165,8 @@ folly::Future<Response> QueryProcessor::predict(Query query) {
 
     Response response{query,
                       query_id,
+                      final_output,
                       duration_micros,
-                      final_output.first,
-                      final_output.second,
                       default_explanation};
     response_promise.setValue(response);
   });

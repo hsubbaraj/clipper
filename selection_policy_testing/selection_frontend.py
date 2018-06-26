@@ -1,8 +1,8 @@
 import threading
 from collections import deque
-import socket
 import json
 import redis
+import zmq
 import datetime
 
 def select(state, query):
@@ -11,7 +11,7 @@ def select(state, query):
     else:
         return [3]
 
-def combine(state, results):
+def combine(state, query, results):
     return max(results)
 
 class Cache:
@@ -51,16 +51,11 @@ class Reciever (threading.Thread):
         self.sq = select_q
         self.cq = combine_q
         self.sock = sockt
-        self.sock.connect((socket.gethostname(), 8080))
+        self.sock.connect('tcp://localhost:8080')
 
     def run(self):
         while True:
-            a = self.sock.recv(1).decode('utf-8')
-            q = '' + str(a)
-            while a != '}':
-                a = self.sock.recv(1).decode('utf-8')
-                q = q + str(a)
-            query = json.loads(q)
+            query = self.sock.recv_json()
             if query['msg'] == 'select':
                 self.sq.append(query)
                 print('append query', query['query_id'])
@@ -73,13 +68,19 @@ class Sender (threading.Thread):
         super(Sender, self).__init__()
         self.sq = send_que
         self.sock = sock
-        self.sock.connect((socket.gethostname(), 8083))
+        self.sock.connect('tcp://localhost:8083')
 
     def run(self):
         while True:
             if len(self.sq) > 0:
-                query = json.dumps(self.sq.popleft())
-                self.sock.send(query.encode('utf-8'))
+                query = self.sq.popleft()
+                if query['msg'] == 'exec':
+                    msg = [query['query_id'].encode('utf-8')]
+                    for model in query['mids']:
+                        msg += [model.encode('utf-8')]
+                    self.sock.send_multipart(msg)
+                else:
+                    self.sock.send_json(query)
 
 class SelectionPolicy(threading.Thread):
     def __init__(self, query_queue, send_queue, redis_inst, query_cache, id_cache):
@@ -94,7 +95,7 @@ class SelectionPolicy(threading.Thread):
         while True:
             if len(self.query_queue) > 0:
                 query = self.query_queue.popleft()
-                (timestamp, state) = eval(self.redis_inst.get(query['user_id']))
+                (timestamp, state) = eval(self.redis_inst.lindex(query['user_id'], 0))
                 self.query_cache[(query['user_id'], timestamp)] = (state, 1)
                 self.id_cache[query['query_id']] = (query['user_id'], timestamp)
                 self.send_queue.append({'id': query['query_id'], 'msg': 'exec', 'mids': select(state, query)})
@@ -113,7 +114,7 @@ class Combiner (threading.Thread):
             if len(self.query_queue) > 0:
                 query = self.query_queue.popleft()
                 state = self.query_cache[self.id_cache[query['query_id']]][0]
-                final_pred = combine(state, query['preds'])
+                final_pred = combine(state, query, query['preds'])
                 self.send_queue.append({'id': query['query_id'], 'msg': 'return', 'final_pred':final_pred})
                 self.query_cache.pop(self.id_cache[query['query_id']])
                 self.id_cache.pop(query['query_id'])
@@ -121,12 +122,13 @@ class Combiner (threading.Thread):
 
 if __name__ == '__main__':
     re = redis.Redis()
-    re.set('rdurrani', (datetime.datetime.now(), b'state'))
+    re.lpush('rdurrani', (datetime.datetime.now(), b'state'))
     select_queue = deque()
     combine_queue = deque()
     send_queue = deque()
-    recieve_sock = socket.socket()
-    send_sock = socket.socket()
+    ctx = zmq.Context()
+    recieve_sock = ctx.socket(zmq.PAIR)
+    send_sock = ctx.socket(zmq.PAIR)
     query_cache = Cache(refcounts=True)
     id_cache = Cache()
     reciever = Reciever(select_queue, combine_queue, recieve_sock)
