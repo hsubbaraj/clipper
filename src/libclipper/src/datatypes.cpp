@@ -282,7 +282,8 @@ Query::Query(std::string label, long user_id,
       create_time_(std::chrono::high_resolution_clock::now()) {}
 
 std::string Query::get_json_string(std::string msg) {
-  std::string json = "{\"label\":\"" + label_ + "\", \"user_id\":" + user_id_ + ", \"latency_budget\":" + latency_budget_micros_
+  std::string json = "{\"label\":\"" + label_ + "\", \"user_id\":" + std::to_string(user_id_) +
+          ", \"latency_budget\":" + std::to_string(latency_budget_micros_)
           + ", \"selection_policy\":\"" + selection_policy_ + "\", \"msg\":\"" + msg + "\", \"candidate_models\":";
   std::string model_list = "[";
   for(std::vector<VersionedModelId>::iterator i = candidate_models_.begin(); i != candidate_models_.end(); ++i) {
@@ -299,30 +300,30 @@ std::string Query::get_json_string(std::string msg) {
   for (int i = 0; i < input_.get()->size(); i++) {
     switch(input_.get()->type()) {
       case DataType::Ints:
-        json += *static_cast<int*>(input_data);
+        json += std::to_string(*static_cast<int*>(input_data));
         input_data = (static_cast<int*>(input_data) + 1);
         break;
       case DataType::Doubles:
-        json += *static_cast<double*>(input_data);
+        json += std::to_string(*static_cast<double*>(input_data));
         input_data = (static_cast<double*>(input_data) + 1);
         break;
       case DataType::Strings:
-        json += *static_cast<std::string*>(input_data);
+        json += (*static_cast<std::string*>(input_data));
         input_data = (static_cast<std::string*>(input_data) + 1);
         break;
       case DataType::Floats:
-        json += *static_cast<float*>(input_data);
+        json += std::to_string(*static_cast<float*>(input_data));
         input_data = (static_cast<float*>(input_data) + 1);
         break;
       case DataType::Bytes:
-        json += *static_cast<unsigned char*>(input_data);
+        json += (*static_cast<unsigned char*>(input_data));
         input_data = (static_cast<unsigned char*>(input_data) + 1);
         break;
     }
     if (i < input_.get()->size() - 1) {
       json += ", ";
     } else {
-      json += "]}";
+      json += "], \"query_id\":";
     }
   }
   return json;

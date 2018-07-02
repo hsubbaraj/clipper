@@ -304,7 +304,7 @@ class Response {
  public:
   ~Response() = default;
 
-  Response(Query query, QueryId query_id, CombinedOuput output,
+  Response(Query query, QueryId query_id, CombinedOutput output,
            const long duration_micros,
            const boost::optional<std::string> default_explanation);
 
