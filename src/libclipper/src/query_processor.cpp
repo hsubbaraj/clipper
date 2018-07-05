@@ -51,20 +51,15 @@ std::shared_ptr<StateDB> QueryProcessor::get_state_table() const {
 folly::Future<Response> QueryProcessor::predict(Query query) {
   clipper::Config& conf = clipper::get_config();
   long query_id = query_counter_.fetch_add(1);
-  log_info(LOGGING_TAG_QUERY_PROCESSOR, "Query Processor JSON String created");
   std::string query_json = (query.get_json_string("select") + std::to_string(query_id) + "}");
   message_t msg(query_json.length());
   memcpy ( (void *) msg.data(), query_json.c_str(), query_json.length());
-  log_info(LOGGING_TAG_QUERY_PROCESSOR, "Message Copied");
   std::string cmd = "python clipper/selection_policy_testing/selection_frontend.py "
                     + conf.get_redis_address() + " " + std::to_string(conf.get_redis_port()) + " &";
   popen(cmd.c_str(), "r");
-  log_info(LOGGING_TAG_QUERY_PROCESSOR, query_json);
   send_sock.send(msg);
-  log_info(LOGGING_TAG_QUERY_PROCESSOR, "Message Sent");
   message_t responsem;
   rcv_sock.recv(&responsem);
-  log_info(LOGGING_TAG_QUERY_PROCESSOR, "Message Recieved");
   long q_id = std::stol(std::string(static_cast<char*>(responsem.data()), responsem.size()));
   int more;
   size_t more_size = sizeof(more);
@@ -72,10 +67,8 @@ folly::Future<Response> QueryProcessor::predict(Query query) {
   std::vector<VersionedModelId> candidate_model_ids;
   while (more) {
     rcv_sock.recv(&responsem);
-    log_info(LOGGING_TAG_QUERY_PROCESSOR, "More Recieved");
     std::string name = std::string(static_cast<char*>(responsem.data()), responsem.size());
     rcv_sock.recv(&responsem);
-    log_info(LOGGING_TAG_QUERY_PROCESSOR, "Selection Policy More Recieved");
     std::string id = std::string(static_cast<char*>(responsem.data()), responsem.size());
     candidate_model_ids.push_back(VersionedModelId(name, id));
     rcv_sock.getsockopt(ZMQ_RCVMORE, &more, &more_size);
@@ -100,8 +93,6 @@ folly::Future<Response> QueryProcessor::predict(Query query) {
   }
 
   size_t num_tasks = task_futures.size();
-  log_info(LOGGING_TAG_QUERY_PROCESSOR, std::to_string(num_tasks));
-  log_info(LOGGING_TAG_QUERY_PROCESSOR, "Tasks");
   folly::Future<folly::Unit> timer_future =
       timer_system_.set_timer(query.latency_budget_micros_);
 
@@ -110,12 +101,10 @@ folly::Future<Response> QueryProcessor::predict(Query query) {
   outputs.reserve(task_futures.size());
   std::shared_ptr<std::vector<Output>> outputs_ptr =
       std::make_shared<std::vector<Output>>(std::move(outputs));
-
   std::vector<folly::Future<folly::Unit>> wrapped_task_futures;
   for (auto it = task_futures.begin(); it < task_futures.end(); it++) {
     wrapped_task_futures.push_back(
         it->then([outputs_mutex, outputs_ptr](Output output) {
-            log_info(LOGGING_TAG_QUERY_PROCESSOR, output.get_json_string());
             std::lock_guard<std::mutex> lock(*outputs_mutex);
             outputs_ptr->push_back(output);
           }).onError([](const std::exception& e) {
@@ -145,26 +134,17 @@ folly::Future<Response> QueryProcessor::predict(Query query) {
     default_explanation
   ](const std::pair<size_t,
                     folly::Try<folly::Unit>>& /* completed_future */) mutable {
-    std::lock_guard<std::mutex> outputs_lock(*outputs_mutex);
-    if (outputs_ptr->empty() && num_tasks > 0 && !default_explanation) {
+      std::lock_guard<std::mutex> outputs_lock(*outputs_mutex);
+      if (outputs_ptr->empty() && num_tasks > 0 && !default_explanation) {
       default_explanation =
           "Failed to retrieve a prediction response within the specified "
           "latency SLO";
-      log_info(LOGGING_TAG_QUERY_PROCESSOR, "EMPTYEMPTY");
     }
-//    log_info(LOGGING_TAG_QUERY_PROCESSOR, "FIRST LOL" + outputs_ptr->front().get_json_string());
-//    log_info(LOGGING_TAG_QUERY_PROCESSOR, outputs_ptr->front().get_json_string());
-      log_info(LOGGING_TAG_QUERY_PROCESSOR, "SIZE");
-    log_info(LOGGING_TAG_QUERY_PROCESSOR, outputs_ptr->size());
-    log_info(LOGGING_TAG_QUERY_PROCESSOR, "Creating combine");
     std::string response_json = "{\"query_id\":" + std::to_string(query_id) + ", \"msg\": \"combine\","
                               + " \"preds\":[";
-    log_info(LOGGING_TAG_QUERY_PROCESSOR, "Gotten output_vec");
     int i = 1;
     for (auto outputi : *outputs_ptr) {
-      log_info(LOGGING_TAG_QUERY_PROCESSOR, "In Loop");
       string sls = "Type: " + std::string(typeid(outputi).name());
-      log_info(LOGGING_TAG_QUERY_PROCESSOR, sls);
       response_json += outputi.get_json_string();
       if (i != num_tasks) {
         response_json += ", ";
@@ -172,8 +152,6 @@ folly::Future<Response> QueryProcessor::predict(Query query) {
       i++;
     }
     response_json += "]}";
-    log_info(LOGGING_TAG_QUERY_PROCESSOR, "RESPONSE JSON:");
-    log_info(LOGGING_TAG_QUERY_PROCESSOR, response_json);
     message_t msg(response_json.length());
     memcpy ( (void *) msg.data(), response_json.c_str(), response_json.length());
     send_sock.send(msg);
@@ -187,8 +165,6 @@ folly::Future<Response> QueryProcessor::predict(Query query) {
         std::chrono::duration_cast<std::chrono::microseconds>(
             end - query.create_time_)
             .count();
-    log_info(LOGGING_TAG_QUERY_PROCESSOR, "LAST DITCH ATTEMPT");
-    log_info(LOGGING_TAG_QUERY_PROCESSOR, outputs_ptr->front().get_json_string());
     Response response{query,
                       query_id,
                       final_output,

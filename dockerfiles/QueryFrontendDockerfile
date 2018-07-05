@@ -1,5 +1,5 @@
 ARG CODE_VERSION
-FROM clipper/lib_base:${CODE_VERSION}
+FROM clipper/lib_base:develop
 
 LABEL maintainer="Dan Crankshaw <dscrankshaw@gmail.com>"
 
@@ -11,7 +11,9 @@ RUN cd /clipper/src/libs/spdlog \
     && ./configure --cleanup-quiet \
     && ./configure --release \
     && cd release \
-    && make -j4 query_frontend
+    && make -j4 query_frontend \
+    && apt -y install python-pip \
+    && pip install redis zmq
 
 ENTRYPOINT ["/clipper/release/src/frontends/query_frontend"]
 

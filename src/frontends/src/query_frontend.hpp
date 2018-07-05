@@ -476,7 +476,7 @@ class RequestHandler {
         // and, if possible, nest it in object form within the
         // query response
         clipper::json::parse_json(query_response.combined_output_.combined_output_, combined_output);
-        clipper::Json::add_object(json_response, "combiner_output", combined_output);
+        clipper::json::add_object(json_response, "combiner_output", combined_output);
     } catch (const clipper::json::json_parse_error& e) {
         // If the string output is not JSON-formatted, include
         // it in the query response

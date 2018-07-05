@@ -106,36 +106,10 @@ std::string Output::get_json_string() {
       json += "], \"preds\":[";
     }
   }
-  void* output_data = get_data<void>(y_hat_).get();
-  for (int i = 0; i < y_hat_.get()->size(); i++) {
-    switch(y_hat_.get()->type()) {
-      case DataType::Ints:
-        json += *static_cast<int*>(output_data);
-        output_data = (static_cast<int*>(output_data) + 1);
-        break;
-      case DataType::Doubles:
-        json += *static_cast<double*>(output_data);
-        output_data = (static_cast<double*>(output_data) + 1);
-        break;
-      case DataType::Strings:
-        json += *static_cast<std::string*>(output_data);
-        output_data = (static_cast<std::string*>(output_data) + 1);
-        break;
-      case DataType::Floats:
-        json += *static_cast<float*>(output_data);
-        output_data = (static_cast<float*>(output_data) + 1);
-        break;
-      case DataType::Bytes:
-        json += *static_cast<unsigned char*>(output_data);
-        output_data = (static_cast<unsigned char*>(output_data) + 1);
-        break;
-    }
-    if (i < y_hat_.get()->size() - 1) {
-      json += ", ";
-    } else {
-      json += "]}";
-    }
-  }
+  SharedPoolPtr<char> str_content = clipper::get_data<char>(y_hat_);
+  json += std::string(str_content.get() + y_hat_->start(),
+                     str_content.get() + y_hat_->start() + y_hat_->size());
+  json += "]}";
   return json;
 }
 
@@ -290,10 +264,9 @@ std::string Query::get_json_string(std::string msg) {
     model_list += (*i).get_json_string();
     if (i + 1 != candidate_models_.end()) {
       model_list += ", ";
-    } else {
-      model_list += "]";
     }
   }
+  model_list += "]";
   json += model_list;
   json += ", \"data\": [";
   void* input_data = get_data<void>(input_).get();

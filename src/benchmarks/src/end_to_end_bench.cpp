@@ -94,11 +94,7 @@ void send_predictions(std::unordered_map<std::string, std::string> &config,
 
       prediction.then([bench_metrics](Response r) {
         // Update metrics
-        if (r.output_is_default_) {
-          bench_metrics.default_pred_ratio_->increment(1, 1);
-        } else {
-          bench_metrics.default_pred_ratio_->increment(0, 1);
-        }
+        bench_metrics.default_pred_ratio_->increment(1, 1);
         bench_metrics.latency_->insert(r.duration_micros_);
         bench_metrics.num_predictions_->increment(1);
         bench_metrics.throughput_->mark(1);

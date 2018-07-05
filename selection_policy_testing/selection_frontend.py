@@ -1,18 +1,16 @@
 import threading
 from collections import deque
 import json
+import sys
 import redis
 import zmq
 import datetime
 
 def select(state, query):
-    if query['select_flag']:
-        return [1, 2]
-    else:
-        return [3]
+    return [query['candidate_models'][0]]
 
-def combine(state, query, results):
-    return max(results)
+def combine(state, query):
+    return query['preds']
 
 class Cache:
     def __init__(self, refcounts=False):
@@ -75,9 +73,9 @@ class Sender (threading.Thread):
             if len(self.sq) > 0:
                 query = self.sq.popleft()
                 if query['msg'] == 'exec':
-                    msg = [query['query_id'].encode('utf-8')]
+                    msg = [str(query['query_id'])]
                     for model in query['mids']:
-                        msg += [model.encode('utf-8')]
+                        msg += [model['name'].encode('utf-8'), model['id'].encode('utf-8')]
                     self.sock.send_multipart(msg)
                 else:
                     self.sock.send_json(query)
@@ -98,7 +96,7 @@ class SelectionPolicy(threading.Thread):
                 (timestamp, state) = eval(self.redis_inst.lindex(query['user_id'], 0))
                 self.query_cache[(query['user_id'], timestamp)] = (state, 1)
                 self.id_cache[query['query_id']] = (query['user_id'], timestamp)
-                self.send_queue.append({'id': query['query_id'], 'msg': 'exec', 'mids': select(state, query)})
+                self.send_queue.append({'query_id': query['query_id'], 'msg': 'exec', 'mids': select(state, query)})
                 print('append send sel', query['query_id'])
 
 class Combiner (threading.Thread):
@@ -114,15 +112,16 @@ class Combiner (threading.Thread):
             if len(self.query_queue) > 0:
                 query = self.query_queue.popleft()
                 state = self.query_cache[self.id_cache[query['query_id']]][0]
-                final_pred = combine(state, query, query['preds'])
-                self.send_queue.append({'id': query['query_id'], 'msg': 'return', 'final_pred':final_pred})
+                final_pred = combine(state, query)
+                self.send_queue.append({'msg': 'return', 'final_pred':final_pred})
                 self.query_cache.pop(self.id_cache[query['query_id']])
                 self.id_cache.pop(query['query_id'])
                 print('append send combine', query['query_id'])
 
 if __name__ == '__main__':
-    re = redis.Redis()
-    re.lpush('rdurrani', (datetime.datetime.now(), b'state'))
+    a = sys.argv
+    re = redis.Redis(host=a[1], port=int(a[2]))
+    re.lpush(0, (datetime.datetime.now(), b'state'))
     select_queue = deque()
     combine_queue = deque()
     send_queue = deque()
