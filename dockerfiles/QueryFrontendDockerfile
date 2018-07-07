@@ -13,7 +13,7 @@ RUN cd /clipper/src/libs/spdlog \
     && cd release \
     && make -j4 query_frontend \
     && apt -y install python-pip \
-    && pip install redis zmq
+    && pip install redis zmq numpy
 
 ENTRYPOINT ["/clipper/release/src/frontends/query_frontend"]
 

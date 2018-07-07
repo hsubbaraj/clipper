@@ -96,21 +96,10 @@ bool Output::operator!=(const Output &rhs) const {
   return !(y_hat_ == rhs.y_hat_ && models_used_ == rhs.models_used_);
 }
 
-std::string Output::get_json_string() {
-  std::string json = "{\"models_used\":[";
-  for (std::vector<VersionedModelId>::iterator i = models_used_.begin(); i != models_used_.end(); i++) {
-    json += (*i).get_json_string();
-    if (i + 1 != models_used_.end()) {
-      json += ", ";
-    } else {
-      json += "], \"preds\":[";
-    }
-  }
+std::string Output::get_y_hat_string() {
   SharedPoolPtr<char> str_content = clipper::get_data<char>(y_hat_);
-  json += std::string(str_content.get() + y_hat_->start(),
+  return std::string(str_content.get() + y_hat_->start(),
                      str_content.get() + y_hat_->start() + y_hat_->size());
-  json += "]}";
-  return json;
 }
 
 CombinedOutput::CombinedOutput(std::string combined_output) : combined_output_(combined_output) {}
@@ -304,11 +293,13 @@ std::string Query::get_json_string(std::string msg) {
 
 Response::Response(Query query, QueryId query_id, CombinedOutput output,
                    const long duration_micros,
+                   std::string models_used,
                    const boost::optional<std::string> default_explanation)
     : query_(std::move(query)),
       query_id_(query_id),
       duration_micros_(duration_micros),
       combined_output_(std::move(output)),
+      models_used_(std::move(models_used)),
       default_explanation_(default_explanation) {}
 
 std::string Response::debug_string() const noexcept {

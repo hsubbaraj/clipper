@@ -269,7 +269,6 @@ std::vector<std::pair<VersionedModelId, int>> get_all_containers(
  */
 bool add_application(redox::Redox& redis, const std::string& app_name,
                      const InputType& input_type, const std::string& policy,
-                     const std::string& default_output,
                      const long latency_slo_micros);
 
 /**

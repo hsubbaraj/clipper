@@ -5,12 +5,31 @@ import sys
 import redis
 import zmq
 import datetime
+import numpy as np
 
-def select(state, query):
-    return [query['candidate_models'][0]]
+def default_select(state, query):
+    return query['candidate_models']
 
-def combine(state, query):
-    return query['preds']
+def default_combine(state, query):
+    if len(query['model_outputs']) > 0:
+        return query['model_outputs']
+    else:
+        return "Default Output"
+
+def ensemble_combine(state, query):
+    if len(query['model_outputs']) > 0:
+        return np.average(np.array(query['model_outputs']))
+    else:
+        return "Default Output"
+
+def ab_select(state, query):
+    return [query['candidate_models'][np.random.randint(0, len(query['candidate_models']))]]
+# Have combine return a single string
+# Check if preds and return default output if not
+
+policies = {'default':{'select':default_select, 'combine':default_combine},
+            'ensemble':{'select':default_select, 'combine':ensemble_combine},
+            'ab':{'select':ab_select, 'combine':default_combine}}
 
 class Cache:
     def __init__(self, refcounts=False):
@@ -96,8 +115,12 @@ class SelectionPolicy(threading.Thread):
                 (timestamp, state) = eval(self.redis_inst.lindex(query['user_id'], 0))
                 self.query_cache[(query['user_id'], timestamp)] = (state, 1)
                 self.id_cache[query['query_id']] = (query['user_id'], timestamp)
-                self.send_queue.append({'query_id': query['query_id'], 'msg': 'exec', 'mids': select(state, query)})
-                print('append send sel', query['query_id'])
+                try:
+                    select = policies[query['selection_policy']]['select']
+                except KeyError:
+                    select = policies['default']['select']
+                new_query = {'query_id': query['query_id'], 'msg': 'exec', 'mids': select(state, query)}
+                self.send_queue.append(new_query)
 
 class Combiner (threading.Thread):
     def __init__(self, query_queue, send_queue, query_cache, id_cache):
@@ -112,16 +135,26 @@ class Combiner (threading.Thread):
             if len(self.query_queue) > 0:
                 query = self.query_queue.popleft()
                 state = self.query_cache[self.id_cache[query['query_id']]][0]
+                err = None
+                try:
+                    combine = policies[query['selection_policy']]['combine']
+                except KeyError:
+                    err = "Selection Policy not found. Default used.'"
+                    combine = policies['default']['combine']
                 final_pred = combine(state, query)
-                self.send_queue.append({'msg': 'return', 'final_pred':final_pred})
+                new_query = {'msg':'return', 'final_prediction':final_pred}
+                if err != None:
+                    new_query['combine_error'] = err
+                self.send_queue.append(new_query)
                 self.query_cache.pop(self.id_cache[query['query_id']])
                 self.id_cache.pop(query['query_id'])
-                print('append send combine', query['query_id'])
 
 if __name__ == '__main__':
     a = sys.argv
     re = redis.Redis(host=a[1], port=int(a[2]))
     re.lpush(0, (datetime.datetime.now(), b'state'))
+    combine = policies['default']['combine']
+    select = policies['default']['select']
     select_queue = deque()
     combine_queue = deque()
     send_queue = deque()

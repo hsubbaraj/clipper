@@ -70,7 +70,7 @@ const std::string ADD_APPLICATION_JSON_SCHEMA = R"(
   {
    "name" := string,
    "input_type" := "integers" | "bytes" | "floats" | "doubles" | "strings",
-   "default_output" := string,
+   "selection_policy" := "default" | "ensemble" | "ab" | "user",
    "latency_slo_micros" := int
   }
 )";
@@ -569,29 +569,30 @@ class RequestHandler {
 
     std::string new_model_name = model_names[0];
 
-    if (existing_linked_models.size() > 0) {
-      // We asserted earlier that `model_names` has size 1
-
-      if (std::find(existing_linked_models.begin(),
-                    existing_linked_models.end(),
-                    new_model_name) != existing_linked_models.end()) {
-        std::stringstream ss;
-        ss << "The model with name "
-           << "'" << new_model_name << "'"
-           << " is already linked to "
-           << "'" << app_name << "'";
-        throw clipper::ManagementOperationError(ss.str());
-      } else {
-        // We guarantee that there is only one existing model
-        std::string existing_model_name = existing_linked_models[0];
-        std::stringstream ss;
-        ss << "A model with name " << existing_model_name
-           << " is already linked to "
-           << "'" << app_name << "'"
-           << ".";
-        throw clipper::ManagementOperationError(ss.str());
-      }
-    }
+    // Makes sure only one model linked to any application.
+//    if (existing_linked_models.size() > 0) {
+//      // We asserted earlier that `model_names` has size 1
+//
+//      if (std::find(existing_linked_models.begin(),
+//                    existing_linked_models.end(),
+//                    new_model_name) != existing_linked_models.end()) {
+//        std::stringstream ss;
+//        ss << "The model with name "
+//           << "'" << new_model_name << "'"
+//           << " is already linked to "
+//           << "'" << app_name << "'";
+//        throw clipper::ManagementOperationError(ss.str());
+//      } else {
+//        // We guarantee that there is only one existing model
+//        std::string existing_model_name = existing_linked_models[0];
+//        std::stringstream ss;
+//        ss << "A model with name " << existing_model_name
+//           << " is already linked to "
+//           << "'" << app_name << "'"
+//           << ".";
+//        throw clipper::ManagementOperationError(ss.str());
+//      }
+//    }
 
     if (clipper::redis::add_model_links(redis_connection_, app_name,
                                         model_names)) {
@@ -631,10 +632,8 @@ class RequestHandler {
     std::string app_name = get_string(d, "name");
     InputType input_type =
         clipper::parse_input_type(get_string(d, "input_type"));
-    std::string default_output = get_string(d, "default_output");
+    std::string selection_policy = get_string(d, "selection_policy");
 
-    std::string selection_policy =
-        clipper::DefaultOutputSelectionPolicy::get_name();
     int latency_slo_micros = get_int(d, "latency_slo_micros");
     // check if application already exists
     std::unordered_map<std::string, std::string> existing_app_data =
@@ -642,7 +641,7 @@ class RequestHandler {
     if (existing_app_data.empty()) {
       if (clipper::redis::add_application(redis_connection_, app_name,
                                           input_type, selection_policy,
-                                          default_output, latency_slo_micros)) {
+                                          latency_slo_micros)) {
         std::stringstream ss;
         ss << "Successfully added application with name "
            << "'" << app_name << "'";
@@ -1182,7 +1181,7 @@ class RequestHandler {
     }
     auto app_metadata =
         clipper::redis::get_application(redis_connection_, app_name);
-    return app_metadata["default_output"];
+    return app_metadata["selection_policy"];
   }
 
   /**

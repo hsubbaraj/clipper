@@ -137,8 +137,8 @@ class ClipperConnection(object):
         logger.info("Successfully connected to Clipper cluster at {}".format(
             self.cm.get_query_addr()))
 
-    def register_application(self, name, input_type, default_output,
-                             slo_micros):
+    def register_application(self, name, input_type, slo_micros,
+                             selection_policy='default'):
         # TODO(crankshaw): Add links to user guide section on input types once user guide is
         # written:
         # "See the `User Guide <http://clipper.ai/user_guide/#input-types>`_ for more details
@@ -157,11 +157,6 @@ class ClipperConnection(object):
         input_type : str
             The type of the request data this endpoint can process. Input type can be
             one of "integers", "floats", "doubles", "bytes", or "strings".
-        default_output : str
-            The default output for the application. The default output will be returned whenever
-            an application is unable to receive a response from a model within the specified
-            query latency SLO (service level objective). The reason the default output was returned
-            is always provided as part of the prediction response object.
         slo_micros : int
             The query latency objective for the application in microseconds.
             This is the processing latency between Clipper receiving a request
@@ -172,6 +167,9 @@ class ClipperConnection(object):
             the SLO not be set aggressively low unless absolutely necessary.
             100000 (100ms) is a good starting value, but the optimal latency objective
             will vary depending on the application.
+        selection_policy : str, optional
+            The selection policy for the application. The default selection policy uses all models
+            and returns all outputs. Selection policy can be one of "default", "ensemble", "ab", or "user".
 
         Raises
         ------
@@ -185,7 +183,7 @@ class ClipperConnection(object):
         req_json = json.dumps({
             "name": name,
             "input_type": input_type,
-            "default_output": default_output,
+            "selection_policy": selection_policy,
             "latency_slo_micros": slo_micros
         })
         headers = {'Content-type': 'application/json'}

@@ -453,7 +453,6 @@ std::vector<std::pair<VersionedModelId, int>> get_all_containers(
 
 bool add_application(redox::Redox& redis, const std::string& appname,
                      const InputType& input_type, const std::string& policy,
-                     const std::string& default_output,
                      const long latency_slo_micros) {
   if (send_cmd_no_reply<string>(
           redis, {"SELECT", std::to_string(REDIS_APPLICATION_DB_NUM)})) {
@@ -463,8 +462,6 @@ bool add_application(redox::Redox& redis, const std::string& appname,
                                            get_readable_input_type(input_type),
                                            "policy",
                                            policy,
-                                           "default_output",
-                                           default_output,
                                            "latency_slo_micros",
                                            std::to_string(latency_slo_micros)};
     return send_cmd_no_reply<string>(redis, cmd_vec);

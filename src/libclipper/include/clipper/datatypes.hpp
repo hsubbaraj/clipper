@@ -275,7 +275,7 @@ class Output {
   bool operator==(const Output &rhs) const;
   bool operator!=(const Output &rhs) const;
 
-  std::string get_json_string();
+  std::string get_y_hat_string();
 
   std::shared_ptr<PredictionData> y_hat_;
   std::vector<VersionedModelId> models_used_;
@@ -306,6 +306,7 @@ class Response {
 
   Response(Query query, QueryId query_id, CombinedOutput output,
            const long duration_micros,
+           std::string models_used,
            const boost::optional<std::string> default_explanation);
 
   // default copy constructors
@@ -323,6 +324,7 @@ class Response {
   long duration_micros_;
   CombinedOutput combined_output_;
   boost::optional<std::string> default_explanation_;
+  std::string models_used_;
 };
 
 class Feedback {

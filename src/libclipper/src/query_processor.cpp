@@ -130,7 +130,7 @@ folly::Future<Response> QueryProcessor::predict(Query query) {
   folly::Future<Response> response_future = response_promise.getFuture();
 
   response_ready_future.then([
-    this, outputs_ptr, outputs_mutex, num_tasks, query, query_id, response_promise = std::move(response_promise),
+    this, candidate_model_ids, outputs_ptr, outputs_mutex, num_tasks, query, query_id, response_promise = std::move(response_promise),
     default_explanation
   ](const std::pair<size_t,
                     folly::Try<folly::Unit>>& /* completed_future */) mutable {
@@ -141,11 +141,10 @@ folly::Future<Response> QueryProcessor::predict(Query query) {
           "latency SLO";
     }
     std::string response_json = "{\"query_id\":" + std::to_string(query_id) + ", \"msg\": \"combine\","
-                              + " \"preds\":[";
+                              + " \"selection_policy\": \"" + query.selection_policy_ + "\", \"model_outputs\":[";
     int i = 1;
     for (auto outputi : *outputs_ptr) {
-      string sls = "Type: " + std::string(typeid(outputi).name());
-      response_json += outputi.get_json_string();
+      response_json += outputi.get_y_hat_string();
       if (i != num_tasks) {
         response_json += ", ";
       }
@@ -158,17 +157,25 @@ folly::Future<Response> QueryProcessor::predict(Query query) {
     message_t responsem;
     rcv_sock.recv(&responsem);
     CombinedOutput final_output{std::string(static_cast<char*>(responsem.data()), responsem.size())};
-
     std::chrono::time_point<std::chrono::high_resolution_clock> end =
         std::chrono::high_resolution_clock::now();
     long duration_micros =
         std::chrono::duration_cast<std::chrono::microseconds>(
             end - query.create_time_)
             .count();
-    Response response{query,
+    std::string models = "[";
+    for (std::vector<VersionedModelId>::iterator i = candidate_model_ids.begin(); i != candidate_model_ids.end(); i++) {
+      models += i->get_json_string();
+      if (i + 1 != candidate_model_ids.end()) {
+          models += ", ";
+        }
+    }
+    models += "]";
+      Response response{query,
                       query_id,
                       final_output,
                       duration_micros,
+                      models,
                       default_explanation};
     response_promise.setValue(response);
   });
