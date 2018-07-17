@@ -286,11 +286,14 @@ class Server(threading.Thread):
                     msg_id_bytes = socket.recv()
                     msg_id = int(struct.unpack("<I", msg_id_bytes)[0])
 
+                    a = "Got start of message %d " % msg_id
+                    logger.info(a)
                     print("Got start of message %d " % msg_id)
                     # list of byte arrays
                     request_header = socket.recv()
                     request_type = struct.unpack("<I", request_header)[0]
-
+                    logger.info(request_header.__str__())
+                    logger.info(request_type)
                     if request_type == REQUEST_TYPE_PREDICT:
                         input_header_size_raw = socket.recv()
                         input_header_size_bytes = struct.unpack(
@@ -383,6 +386,7 @@ class Server(threading.Thread):
                         feedback_request = FeedbackRequest(msg_id_bytes, [])
                         response = self.handle_feedback_request(received_msg)
                         response.send(socket, self.event_history)
+                        print("feedback")
                         print("recv: %f s" % ((t2 - t1).total_seconds()))
 
                 sys.stdout.flush()

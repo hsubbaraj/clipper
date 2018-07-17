@@ -192,7 +192,6 @@ class ClipperConnection(object):
         if r.status_code != requests.codes.ok:
             msg = "Received error status code: {code} and message: {msg}".format(
                 code=r.status_code, msg=r.text)
-            logger.error(msg)
             raise ClipperException(msg)
         else:
             logger.info("Application {app} was successfully registered".format(

@@ -430,10 +430,8 @@ class TaskExecutor {
   }
 
   std::vector<folly::Future<FeedbackAck>> schedule_feedback(
-      const std::vector<FeedbackTask> tasks) {
-    UNUSED(tasks);
-    // TODO Implement
-    return {};
+      std::vector<FeedbackTask> tasks) {
+      {}
   }
 
  private:

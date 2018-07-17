@@ -189,52 +189,42 @@ folly::Future<FeedbackAck> QueryProcessor::update(FeedbackQuery feedback) {
   long query_id = query_counter_.fetch_add(1);
   folly::Future<FeedbackAck> error_response = folly::makeFuture(false);
 
-  auto current_policy_iter =
-      selection_policies_.find(feedback.selection_policy_);
-  if (current_policy_iter == selection_policies_.end()) {
-    log_error_formatted(LOGGING_TAG_QUERY_PROCESSOR,
-                        "{} is an invalid selection policy",
-                        feedback.selection_policy_);
-    // TODO better error handling
-    return error_response;
+  std::string query_json = feedback.get_json_string();
+  message_t msg(query_json.length());
+  memcpy ( (void *) msg.data(), query_json.c_str(), query_json.length());
+  send_sock.send(msg);
+  message_t responsem;
+  rcv_sock.recv(&responsem);
+  long q_id = std::stol(std::string(static_cast<char*>(responsem.data()), responsem.size()));
+  int more;
+  size_t more_size = sizeof(more);
+  rcv_sock.getsockopt(ZMQ_RCVMORE, &more, &more_size);
+  std::vector<VersionedModelId> candidate_model_ids;
+  while (more) {
+    rcv_sock.recv(&responsem);
+    std::string name = std::string(static_cast<char*>(responsem.data()), responsem.size());
+    rcv_sock.recv(&responsem);
+    std::string id = std::string(static_cast<char*>(responsem.data()), responsem.size());
+    candidate_model_ids.push_back(VersionedModelId(name, id));
+    rcv_sock.getsockopt(ZMQ_RCVMORE, &more, &more_size);
   }
-  std::shared_ptr<SelectionPolicy> current_policy = current_policy_iter->second;
 
-  StateKey state_key{feedback.label_, feedback.user_id_, 0};
-  auto state_opt = state_db_->get(state_key);
-  if (!state_opt) {
-    log_error_formatted(LOGGING_TAG_QUERY_PROCESSOR,
-                        "No selection state found for query with label: {}",
-                        feedback.label_);
-    // TODO better error handling
-    return error_response;
-  }
-  std::shared_ptr<SelectionState> selection_state =
-      current_policy->deserialize(*state_opt);
-
-  std::vector<PredictTask> predict_tasks;
   std::vector<FeedbackTask> feedback_tasks;
-  std::tie(predict_tasks, feedback_tasks) =
-      current_policy->select_feedback_tasks(selection_state, feedback,
-                                            query_id);
+  for(std::vector<VersionedModelId>::iterator it = candidate_model_ids.begin(); it != candidate_model_ids.end(); ++it) {
+    feedback_tasks.emplace_back(feedback.feedback_, *it, q_id, 1000000);
+  }
 
   log_info_formatted(LOGGING_TAG_QUERY_PROCESSOR,
-                     "Scheduling {} prediction tasks and {} feedback tasks",
-                     predict_tasks.size(), feedback_tasks.size());
+                     "Scheduling {} feedback tasks",
+                       feedback_tasks.size());
 
   // 1) Wait for all prediction_tasks to complete
   // 2) Update selection policy
   // 3) Complete select_policy_update_promise
   // 4) Wait for all feedback_tasks to complete (feedback_processed future)
 
-  vector<folly::Future<Output>> predict_task_futures =
-      task_executor_.schedule_predictions({predict_tasks});
-
   vector<folly::Future<FeedbackAck>> feedback_task_futures =
-      task_executor_.schedule_feedback(std::move(feedback_tasks));
-
-  folly::Future<std::vector<Output>> all_preds_completed =
-      folly::collect(predict_task_futures);
+      task_executor_.schedule_feedback(feedback_tasks);
 
   folly::Future<std::vector<FeedbackAck>> all_feedback_completed =
       folly::collect(feedback_task_futures);
@@ -246,35 +236,35 @@ folly::Future<FeedbackAck> QueryProcessor::update(FeedbackQuery feedback) {
       select_policy_update_promise.getFuture();
   auto state_table = get_state_table();
 
-  all_preds_completed.then([
-    moved_promise = std::move(select_policy_update_promise), selection_state,
-    current_policy, state_table, feedback, query_id, state_key
-  ](std::vector<Output> preds) mutable {
-    auto new_selection_state = current_policy->process_feedback(
-        selection_state, feedback.feedback_, preds);
-    state_table->put(state_key, current_policy->serialize(new_selection_state));
-    moved_promise.setValue(true);
-  });
+//  all_preds_completed.then([
+//    moved_promise = std::move(select_policy_update_promise), selection_state,
+//    current_policy, state_table, feedback, query_id, state_key
+//  ](std::vector<Output> preds) mutable {
+//    auto new_selection_state = current_policy->process_feedback(
+//        selection_state, feedback.feedback_, preds);
+//    state_table->put(state_key, current_policy->serialize(new_selection_state));
+//    moved_promise.setValue(true);
+//  });
+//
+//  auto feedback_ack_ready_future =
+//      folly::collect(all_feedback_completed, select_policy_updated);
+//
+//  folly::Future<FeedbackAck> final_feedback_future =
+//      feedback_ack_ready_future.then(
+//          [](std::tuple<std::vector<FeedbackAck>, FeedbackAck> results) {
+//            bool select_policy_update_result = std::get<1>(results);
+//            if (!select_policy_update_result) {
+//              return false;
+//            }
+//            for (FeedbackAck task_feedback : std::get<0>(results)) {
+//              if (!task_feedback) {
+//                return false;
+//              }
+//            }
+//            return true;
+//          });
 
-  auto feedback_ack_ready_future =
-      folly::collect(all_feedback_completed, select_policy_updated);
-
-  folly::Future<FeedbackAck> final_feedback_future =
-      feedback_ack_ready_future.then(
-          [](std::tuple<std::vector<FeedbackAck>, FeedbackAck> results) {
-            bool select_policy_update_result = std::get<1>(results);
-            if (!select_policy_update_result) {
-              return false;
-            }
-            for (FeedbackAck task_feedback : std::get<0>(results)) {
-              if (!task_feedback) {
-                return false;
-              }
-            }
-            return true;
-          });
-
-  return final_feedback_future;
+  return true;
 }
 
 }  // namespace clipper

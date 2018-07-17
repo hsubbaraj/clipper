@@ -314,6 +314,40 @@ std::string Response::debug_string() const noexcept {
 Feedback::Feedback(std::shared_ptr<PredictionData> input, double y)
     : y_(y), input_(std::move(input)) {}
 
+std::string Feedback::get_json_string() {
+  std::string json = "{\"label\":" + std::to_string(y_) + ", \"input\":[";
+  void* input_data = get_data<void>(input_).get();
+  for (int i = 0; i < input_.get()->size(); i++) {
+    switch(input_.get()->type()) {
+      case DataType::Ints:
+        json += std::to_string(*static_cast<int*>(input_data));
+            input_data = (static_cast<int*>(input_data) + 1);
+            break;
+      case DataType::Doubles:
+        json += std::to_string(*static_cast<double*>(input_data));
+            input_data = (static_cast<double*>(input_data) + 1);
+            break;
+      case DataType::Strings:
+        json += (*static_cast<std::string*>(input_data));
+            input_data = (static_cast<std::string*>(input_data) + 1);
+            break;
+      case DataType::Floats:
+        json += std::to_string(*static_cast<float*>(input_data));
+            input_data = (static_cast<float*>(input_data) + 1);
+            break;
+      case DataType::Bytes:
+        json += (*static_cast<unsigned char*>(input_data));
+            input_data = (static_cast<unsigned char*>(input_data) + 1);
+            break;
+    }
+    if (i < input_.get()->size() - 1) {
+      json += ", ";
+    }
+  }
+  json += "]}";
+  return json;
+}
+
 FeedbackQuery::FeedbackQuery(std::string label, long user_id, Feedback feedback,
                              std::string selection_policy,
                              std::vector<VersionedModelId> candidate_models)
@@ -322,6 +356,20 @@ FeedbackQuery::FeedbackQuery(std::string label, long user_id, Feedback feedback,
       feedback_(std::move(feedback)),
       selection_policy_(std::move(selection_policy)),
       candidate_models_(std::move(candidate_models)) {}
+
+std::string FeedbackQuery::get_json_string() {
+  std::string json = "{\"label\":\"" + label_ + "\", \"user_id\":" + std::to_string(user_id_)
+          + ", \"feedback\":" + feedback_.get_json_string() + ", \"selection_policy\":"
+                                                              + selection_policy_ + "\"candidate_models\":[";
+  for(std::vector<VersionedModelId>::iterator i = candidate_models_.begin(); i != candidate_models_.end(); ++i) {
+    json += (*i).get_json_string();
+    if (i + 1 != candidate_models_.end()) {
+      json += ", ";
+    }
+  }
+  json += "]}";
+  return json;
+}
 
 PredictTask::PredictTask(std::shared_ptr<PredictionData> input,
                          VersionedModelId model, float utility,

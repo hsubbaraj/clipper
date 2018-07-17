@@ -338,6 +338,8 @@ class Feedback {
   Feedback(Feedback &&) = default;
   Feedback &operator=(Feedback &&) = default;
 
+  std::string get_json_string();
+
   double y_;
   std::shared_ptr<PredictionData> input_;
 };
@@ -354,6 +356,8 @@ class FeedbackQuery {
 
   FeedbackQuery(FeedbackQuery &&) = default;
   FeedbackQuery &operator=(FeedbackQuery &&) = default;
+
+  std::string get_json_string();
 
   // Used to provide a namespace for queries. The expected
   // use is to distinguish queries coming from different
