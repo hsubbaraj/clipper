@@ -1,3 +1,4 @@
+ARG REGISTRY
 ARG CODE_VERSION
 FROM clipper/lib_base:develop
 
