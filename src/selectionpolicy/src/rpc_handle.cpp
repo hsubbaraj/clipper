@@ -4,12 +4,12 @@
 
 #include <clipper/datatypes.hpp>
 
-#include "rpc_handle_wrapper.h"
+#include "rpc_handle.h"
 
 RPCHandle::RPCHandle()
     : select_queue_(std::make_shared<moodycamel::ConcurrentQueue<std::string>>()),
       send_queue_(std::make_shared<moodycamel::ConcurrentQueue<std::vector<std::string>>>()),
-      context_(1), send_sock_(context, ZMQ_PAIR), recv_sock_(context, ZMQ_PAIR) {}
+      context_(1), send_sock_(context_, ZMQ_PAIR), recv_sock_(context_, ZMQ_PAIR) {}
 
 void RPCHandle::recv_thread() {
   recv_sock_.bind("tcp://*:8080");
@@ -44,8 +44,11 @@ void RPCHandle::return_selection(std::vector<std::string> models) {
 }
 
 void RPCHandle::start() {
-  std::thread recv(recv_thread);
-  std::thread send(send_thread);
+  std::thread recv(&RPCHandle::recv_thread, this);
+  std::thread send(&RPCHandle::send_thread, this);
+
+  recv.join();
+  send.join();
 }
 
 std::string RPCHandle::get_query() {

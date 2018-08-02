@@ -9,7 +9,7 @@ static PyObject* start_rpc_handle(PyObject *self, PyObject *args) {
 
   rpc_handle_start(rpc_handle);
 
-  PyObject *result = (PyObject *)rpc_handle;
+  PyObject *result = PyCapsule_New((void *)rpc_handle, NULL, NULL);
 
   Py_XINCREF(result);
 
@@ -17,7 +17,12 @@ static PyObject* start_rpc_handle(PyObject *self, PyObject *args) {
 }
 
 static PyObject* get_query_string(PyObject *self, PyObject *args) {
-  rpc_handle_t * rpc_handle = (rpc_handle_t *)args;
+
+  if (!PyCapsule_IsValid(args)) {
+    return NULL;
+  }
+
+  rpc_handle_t * rpc_handle = (rpc_handle_t *)PyCapsule_GetPointer(args, NULL);
 
   char * query = rpc_handle_get_query(rpc_handle);
 
@@ -40,6 +45,10 @@ static PyObject* return_selection(PyObject *self, PyObject *args) {
     return NULL;
   }
 
+  if (!PyCapsule_IsValid(rpc_handle)) {
+    return NULL;
+  }
+
   int len = PyObject_Length(string_list);
   char* ptr[len];
 
@@ -49,7 +58,7 @@ static PyObject* return_selection(PyObject *self, PyObject *args) {
     ptr[i] = PyString_AsString(item);
   }
 
-  rpc_handle_return_selection((rpc_handle_t *) rpc_handle, ptr);
+  rpc_handle_return_selection((rpc_handle_t *) PyCapsule_GetPointer(rpc_handle, NULL), ptr);
 
   Py_INCREF(Py_None);
   return Py_None;

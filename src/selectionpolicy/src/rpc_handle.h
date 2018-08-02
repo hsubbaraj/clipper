@@ -10,6 +10,8 @@
 
 #include "zmq.hpp"
 
+using namespace std;
+
 class RPCHandle {
 public:
     ~RPCHandle() = default;
