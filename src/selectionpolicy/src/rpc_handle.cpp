@@ -4,7 +4,7 @@
 
 #include <clipper/datatypes.hpp>
 
-#include "rpc_handle.h"
+#include "rpc_handle.hpp"
 
 RPCHandle::RPCHandle()
     : select_queue_(std::make_shared<moodycamel::ConcurrentQueue<std::string>>()),
@@ -15,7 +15,7 @@ void RPCHandle::recv_thread() {
   recv_sock_.bind("tcp://*:8080");
   zmq::message_t msg;
   while (true) {
-    recv_sock.recv(&msg);
+    recv_sock_.recv(&msg);
     select_queue_->enqueue(std::string(static_cast<char*>(msg.data()), msg.size()));
   }
 }
@@ -26,7 +26,7 @@ void RPCHandle::send_thread() {
   while (true) {
     bool not_empty = send_queue_->try_dequeue(list_item);
     if (not_empty) {
-      for (auto item = list_item.begin(); item < list_item.end(); it++) {
+      for (auto item = list_item.begin(); item < list_item.end(); item++) {
         zmq::message_t m(item->length());
         memcpy((void *) m.data(), item->c_str(), item->length());
         if (item < list_item.end() - 1) {

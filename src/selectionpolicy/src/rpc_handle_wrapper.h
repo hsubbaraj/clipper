@@ -18,7 +18,7 @@ void rpc_handle_destroy(rpc_handle_t *self);
 void rpc_handle_start(rpc_handle_t *self);
 void rpc_handle_return_selection(rpc_handle_t *self, char* models[]);
 
-char *rpc_handle_get_query(rpc_handle_t *self);
+const char *rpc_handle_get_query(rpc_handle_t *self);
 
 #ifdef __cplusplus
 }

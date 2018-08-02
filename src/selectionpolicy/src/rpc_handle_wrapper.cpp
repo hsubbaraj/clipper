@@ -3,7 +3,7 @@
 #include <vector>
 
 #include "rpc_handle_wrapper.h"
-#include "rpc_handle.h"
+#include "rpc_handle.hpp"
 
 struct rpc_handle {
     void *object;
@@ -13,7 +13,7 @@ rpc_handle_t *rpc_handle_create() {
   rpc_handle_t *wrapper;
   RPCHandle *object;
 
-  wrapper = (typeof(m))malloc(sizeof(*m));
+  wrapper = (rpc_handle_t *) malloc(sizeof(*wrapper));
   object = new RPCHandle();
 
   wrapper->object = object;
@@ -33,7 +33,7 @@ void rpc_handle_start(rpc_handle_t *self) {
   static_cast<RPCHandle *>(self->object)->start();
 }
 
-char *rpc_handle_get_query(rpc_handle_t *self) {
+const char *rpc_handle_get_query(rpc_handle_t *self) {
   return static_cast<RPCHandle *>(self->object)->get_query().c_str();
 }
 
