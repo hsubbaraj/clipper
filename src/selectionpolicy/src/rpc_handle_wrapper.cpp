@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include <string>
+#include <iostream>
 #include <vector>
 
 #include "rpc_handle_wrapper.h"
@@ -17,6 +18,8 @@ rpc_handle_t *rpc_handle_create() {
   object = new RPCHandle();
 
   wrapper->object = object;
+
+  cout << "Blank" << std::endl;
 
   return wrapper;
 }
