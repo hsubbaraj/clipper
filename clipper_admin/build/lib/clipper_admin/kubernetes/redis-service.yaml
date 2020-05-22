@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    ai.clipper.container.label: {{ cluster_name }}
+    ai.clipper.name: redis
+  name: {{ deployment_name }} # Cluster name included
+spec:
+  type: NodePort
+  ports:
+  - name: "6379"
+    port: {{ public_redis_port }}
+    targetPort: 6379
+  selector:
+    ai.clipper.name: redis
+    ai.clipper.container.label: {{ cluster_name }}

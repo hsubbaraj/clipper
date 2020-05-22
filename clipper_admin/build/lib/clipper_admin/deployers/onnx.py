@@ -2,37 +2,34 @@ from __future__ import print_function, with_statement, absolute_import
 import shutil
 import torch
 import logging
-import re
 import os
-import json
-import sys
+from warnings import warn
 
-from ..version import __version__, __registry__
-from ..clipper_admin import ClipperException
-from .deployer_utils import save_python_function, serialize_object
+from ..version import __registry__, __version__
+from .deployer_utils import save_python_function
 
 logger = logging.getLogger(__name__)
 
-PYTORCH_WEIGHTS_RELATIVE_PATH = "pytorch_weights.pkl"
-PYTORCH_MODEL_RELATIVE_PATH = "pytorch_model.pkl"
 
-
-def create_endpoint(clipper_conn,
-                    name,
-                    input_type,
-                    func,
-                    pytorch_model,
-                    default_output="None",
-                    version=1,
-                    slo_micros=3000000,
-                    labels=None,
-                    registry=None,
-                    base_image="default",
-                    num_replicas=1,
-                    batch_size=-1,
-                    pkgs_to_install=None):
-    """Registers an app and deploys the provided predict function with PyTorch model as
-    a Clipper model.
+def create_pytorch_endpoint(clipper_conn,
+                            name,
+                            input_type,
+                            inputs,
+                            func,
+                            pytorch_model,
+                            default_output="None",
+                            version=1,
+                            slo_micros=3000000,
+                            labels=None,
+                            registry=None,
+                            base_image=None,
+                            num_replicas=1,
+                            onnx_backend="caffe2",
+                            batch_size=-1,
+                            pkgs_to_install=None):
+    """This function deploys the prediction function with a PyTorch model.
+    It serializes the PyTorch model in Onnx format and creates a container that loads it as a
+    Caffe2 model.
 
     Parameters
     ----------
@@ -43,6 +40,8 @@ def create_endpoint(clipper_conn,
     input_type : str
         The input_type to be associated with the registered app and deployed model.
         One of "integers", "floats", "doubles", "bytes", or "strings".
+    inputs :
+        input of func.
     func : function
         The prediction function. Any state associated with the function will be
         captured via closure capture and pickled with Cloudpickle.
@@ -81,12 +80,14 @@ def create_endpoint(clipper_conn,
         The number of replicas of the model to create. The number of replicas
         for a model can be changed at any time with
         :py:meth:`clipper.ClipperConnection.set_num_replicas`.
+    onnx_backend : str, optional
+        The provided onnx backend.Caffe2 is the only currently supported ONNX backend.
     batch_size : int, optional
         The user-defined query batch size for the model. Replicas of the model will attempt
         to process at most `batch_size` queries simultaneously. They may process smaller
         batches if `batch_size` queries are not immediately available.
-        If the default value of -1 is used, Clipper will adaptively calculate the batch size for individual
-        replicas of this model.
+        If the default value of -1 is used, Clipper will adaptively calculate the batch size for
+        individual replicas of this model.
     pkgs_to_install : list (of strings), optional
         A list of the names of packages to install, using pip, in the container.
         The names must be strings.
@@ -94,9 +95,10 @@ def create_endpoint(clipper_conn,
 
     clipper_conn.register_application(name, input_type, default_output,
                                       slo_micros)
-    deploy_pytorch_model(clipper_conn, name, version, input_type, func,
+    deploy_pytorch_model(clipper_conn, name, version, input_type, inputs, func,
                          pytorch_model, base_image, labels, registry,
-                         num_replicas, batch_size, pkgs_to_install)
+                         num_replicas, onnx_backend, batch_size,
+                         pkgs_to_install)
 
     clipper_conn.link_model_to_app(name, name)
 
@@ -105,16 +107,20 @@ def deploy_pytorch_model(clipper_conn,
                          name,
                          version,
                          input_type,
+                         inputs,
                          func,
                          pytorch_model,
-                         base_image="default",
+                         base_image=None,
                          labels=None,
                          registry=None,
                          num_replicas=1,
+                         onnx_backend="caffe2",
                          batch_size=-1,
                          pkgs_to_install=None):
-    """Deploy a Python function with a PyTorch model.
-
+    """This function deploys the prediction function with a PyTorch model.
+    It serializes the PyTorch model in Onnx format and creates a container that loads it as a
+    Caffe2 model.
+    
     Parameters
     ----------
     clipper_conn : :py:meth:`clipper_admin.ClipperConnection`
@@ -127,6 +133,8 @@ def deploy_pytorch_model(clipper_conn,
     input_type : str
         The input_type to be associated with the registered app and deployed model.
         One of "integers", "floats", "doubles", "bytes", or "strings".
+    inputs :
+        input of func.
     func : function
         The prediction function. Any state associated with the function will be
         captured via closure capture and pickled with Cloudpickle.
@@ -147,109 +155,51 @@ def deploy_pytorch_model(clipper_conn,
         The number of replicas of the model to create. The number of replicas
         for a model can be changed at any time with
         :py:meth:`clipper.ClipperConnection.set_num_replicas`.
+    onnx_backend : str, optional
+        The provided onnx backend.Caffe2 is the only currently supported ONNX backend.
     batch_size : int, optional
         The user-defined query batch size for the model. Replicas of the model will attempt
         to process at most `batch_size` queries simultaneously. They may process smaller
         batches if `batch_size` queries are not immediately available.
-        If the default value of -1 is used, Clipper will adaptively calculate the batch size for individual
-        replicas of this model.
+        If the default value of -1 is used, Clipper will adaptively calculate the batch size for
+        individual replicas of this model.
     pkgs_to_install : list (of strings), optional
         A list of the names of packages to install, using pip, in the container.
         The names must be strings.
-
-    Example
-    -------
-    Define a pytorch nn module and save the model::
-    
-        from clipper_admin import ClipperConnection, DockerContainerManager
-        from clipper_admin.deployers.pytorch import deploy_pytorch_model
-        from torch import nn
-
-        clipper_conn = ClipperConnection(DockerContainerManager())
-
-        # Connect to an already-running Clipper cluster
-        clipper_conn.connect()
-        model = nn.Linear(1, 1)
-
-        # Define a shift function to normalize prediction inputs
-        def predict(model, inputs):
-            pred = model(shift(inputs))
-            pred = pred.data.numpy()
-            return [str(x) for x in pred]
-
-
-        deploy_pytorch_model(
-            clipper_conn,
-            name="example",
-            version=1,
-            input_type="doubles",
-            func=predict,
-            pytorch_model=model)
     """
+    warn("""
+The caffe 2 version is not up to date because
+https://github.com/ucbrise/clipper/issues/475,
+however you may still be able use it.
+We will update our caffe2 build soon.""")
+
+    if base_image is None:
+        if onnx_backend is "caffe2":
+            base_image = "{}/caffe2-onnx-container:{}".format(
+                __registry__, __version__)
+        else:
+            logger.error(
+                "{backend} ONNX backend is not currently supported.".format(
+                    backend=onnx_backend))
 
     serialization_dir = save_python_function(name, func)
 
-    # save Torch model
-    torch_weights_save_loc = os.path.join(serialization_dir,
-                                          PYTORCH_WEIGHTS_RELATIVE_PATH)
-
-    torch_model_save_loc = os.path.join(serialization_dir,
-                                        PYTORCH_MODEL_RELATIVE_PATH)
-
     try:
-        torch.save(pytorch_model.state_dict(), torch_weights_save_loc)
-        serialized_model = serialize_object(pytorch_model)
-        with open(torch_model_save_loc, "wb") as serialized_model_file:
-            serialized_model_file.write(serialized_model)
-        logger.info("Torch model saved")
-
-        py_minor_version = (sys.version_info.major, sys.version_info.minor)
-        # Check if Python 2 or Python 3 image
-        if base_image == "default":
-            if py_minor_version < (3, 0):
-                img_name = "pytorch-container"
-                if clipper_conn.cm.gpu:
-                    logger.info("Using Python 2 CUDA image")
-                    img_name = "cuda10-pytorch27-container"
-                else:
-                    logger.info("Using Python 2 base image")
-                base_image = "{}/{}:{}".format(
-                    __registry__, img_name, __version__)
-            elif py_minor_version == (3, 5):
-                if clipper_conn.cm.gpu:
-                    logger.info("PyTorch CUDA deployer only supports Python 2.7 and 3.6.")
-                logger.info("Using Python 3.5 base image")
-                base_image = "{}/pytorch35-container:{}".format(
-                    __registry__, __version__)
-            elif py_minor_version == (3, 6):
-                img_name = "pytorch36-container"
-                if clipper_conn.cm.gpu:
-                    logger.info("Using Python 3.6 CUDA image")
-                    img_name = "cuda10-pytorch36-container"
-                    logger.info("building from hsubbaraj/cuda-pytorch-clipper:latest")
-                    base_image = "hsubbaraj/cuda-pytorch-clipper:latest"
-                else:
-                    logger.info("Using Python 3.6 base image")
-                    base_image = "{}/{}:{}".format(
-                    __registry__, img_name, __version__)
-            else:
-                msg = (
-                    "PyTorch deployer only supports Python 2.7, 3.5, and 3.6. "
-                    "Detected {major}.{minor}").format(
-                        major=sys.version_info.major,
-                        minor=sys.version_info.minor)
-                logger.error(msg)
-                # Remove temp files
-                shutil.rmtree(serialization_dir)
-                raise ClipperException(msg)
-
+        torch.onnx._export(
+            pytorch_model,
+            inputs,
+            os.path.join(serialization_dir, "model.onnx"),
+            export_params=True)
         # Deploy model
         clipper_conn.build_and_deploy_model(
             name, version, input_type, serialization_dir, base_image, labels,
             registry, num_replicas, batch_size, pkgs_to_install)
 
     except Exception as e:
-        raise ClipperException("Error saving torch model: %s" % e)
+        logger.error(
+            "Error serializing PyTorch model to ONNX: {e}".format(e=e))
+
+    logger.info("Torch model has be serialized to ONNX format")
 
     # Remove temp files
     shutil.rmtree(serialization_dir)

@@ -1,6 +1,6 @@
 from __future__ import print_function, with_statement, absolute_import
 import shutil
-import torch
+import pyspark
 import logging
 import re
 import os
@@ -9,19 +9,17 @@ import sys
 
 from ..version import __version__, __registry__
 from ..clipper_admin import ClipperException
-from .deployer_utils import save_python_function, serialize_object
+from .deployer_utils import save_python_function
 
 logger = logging.getLogger(__name__)
-
-PYTORCH_WEIGHTS_RELATIVE_PATH = "pytorch_weights.pkl"
-PYTORCH_MODEL_RELATIVE_PATH = "pytorch_model.pkl"
 
 
 def create_endpoint(clipper_conn,
                     name,
                     input_type,
                     func,
-                    pytorch_model,
+                    pyspark_model,
+                    sc,
                     default_output="None",
                     version=1,
                     slo_micros=3000000,
@@ -31,7 +29,7 @@ def create_endpoint(clipper_conn,
                     num_replicas=1,
                     batch_size=-1,
                     pkgs_to_install=None):
-    """Registers an app and deploys the provided predict function with PyTorch model as
+    """Registers an app and deploys the provided predict function with PySpark model as
     a Clipper model.
 
     Parameters
@@ -46,8 +44,10 @@ def create_endpoint(clipper_conn,
     func : function
         The prediction function. Any state associated with the function will be
         captured via closure capture and pickled with Cloudpickle.
-    pytorch_model : pytorch model object
-        The PyTorch model to save.
+    pyspark_model : pyspark.mllib.* or pyspark.ml.pipeline.PipelineModel object
+        The PySpark model to save.
+    sc : SparkContext,
+        The current SparkContext. This is needed to save the PySpark model.
     default_output : str, optional
         The default output for the application. The default output will be returned whenever
         an application is unable to receive a response from a model within the specified
@@ -94,26 +94,30 @@ def create_endpoint(clipper_conn,
 
     clipper_conn.register_application(name, input_type, default_output,
                                       slo_micros)
-    deploy_pytorch_model(clipper_conn, name, version, input_type, func,
-                         pytorch_model, base_image, labels, registry,
+    deploy_pyspark_model(clipper_conn, name, version, input_type, func,
+                         pyspark_model, sc, base_image, labels, registry,
                          num_replicas, batch_size, pkgs_to_install)
 
     clipper_conn.link_model_to_app(name, name)
 
 
-def deploy_pytorch_model(clipper_conn,
+def deploy_pyspark_model(clipper_conn,
                          name,
                          version,
                          input_type,
                          func,
-                         pytorch_model,
+                         pyspark_model,
+                         sc,
                          base_image="default",
                          labels=None,
                          registry=None,
                          num_replicas=1,
                          batch_size=-1,
                          pkgs_to_install=None):
-    """Deploy a Python function with a PyTorch model.
+    """Deploy a Python function with a PySpark model.
+
+    The function must take 3 arguments (in order): a SparkSession, the PySpark model, and a list of
+    inputs. It must return a list of strings of the same length as the list of inputs.
 
     Parameters
     ----------
@@ -130,8 +134,10 @@ def deploy_pytorch_model(clipper_conn,
     func : function
         The prediction function. Any state associated with the function will be
         captured via closure capture and pickled with Cloudpickle.
-    pytorch_model : pytorch model object
-        The Pytorch model to save.
+    pyspark_model : pyspark.mllib.* or pyspark.ml.pipeline.PipelineModel object
+        The PySpark model to save.
+    sc : SparkContext,
+        The current SparkContext. This is needed to save the PySpark model.
     base_image : str, optional
         The base Docker image to build the new model image from. This
         image should contain all code necessary to run a Clipper model
@@ -159,97 +165,103 @@ def deploy_pytorch_model(clipper_conn,
 
     Example
     -------
-    Define a pytorch nn module and save the model::
-    
+    Define a pre-processing function ``shift()`` to normalize prediction inputs::
+
         from clipper_admin import ClipperConnection, DockerContainerManager
-        from clipper_admin.deployers.pytorch import deploy_pytorch_model
-        from torch import nn
+        from clipper_admin.deployers.pyspark import deploy_pyspark_model
+        from pyspark.mllib.classification import LogisticRegressionWithSGD
+        from pyspark.sql import SparkSession
+        import numpy as np
+
+        spark = SparkSession.builder.appName("example").getOrCreate()
+
+        sc = spark.sparkContext
 
         clipper_conn = ClipperConnection(DockerContainerManager())
 
         # Connect to an already-running Clipper cluster
         clipper_conn.connect()
-        model = nn.Linear(1, 1)
 
-        # Define a shift function to normalize prediction inputs
-        def predict(model, inputs):
-            pred = model(shift(inputs))
-            pred = pred.data.numpy()
-            return [str(x) for x in pred]
+        # Loading a training dataset omitted...
+        model = LogisticRegressionWithSGD.train(trainRDD, iterations=10)
+
+        def shift(x):
+            return x - np.mean(x)
 
 
-        deploy_pytorch_model(
+        # Note that this function accesses the trained PySpark model via an explicit
+        # argument, but other state can be captured via closure capture if necessary.
+        def predict(spark, model, inputs):
+            return [str(model.predict(shift(x))) for x in inputs]
+
+        deploy_pyspark_model(
             clipper_conn,
             name="example",
-            version=1,
             input_type="doubles",
             func=predict,
-            pytorch_model=model)
+            pyspark_model=model,
+            sc=sc)
     """
 
+    model_class = re.search("pyspark.*'",
+                            str(type(pyspark_model))).group(0).strip("'")
+    if model_class is None:
+        raise ClipperException(
+            "pyspark_model argument was not a pyspark object")
+
+    # save predict function
     serialization_dir = save_python_function(name, func)
-
-    # save Torch model
-    torch_weights_save_loc = os.path.join(serialization_dir,
-                                          PYTORCH_WEIGHTS_RELATIVE_PATH)
-
-    torch_model_save_loc = os.path.join(serialization_dir,
-                                        PYTORCH_MODEL_RELATIVE_PATH)
-
+    # save Spark model
+    spark_model_save_loc = os.path.join(serialization_dir,
+                                        "pyspark_model_data")
     try:
-        torch.save(pytorch_model.state_dict(), torch_weights_save_loc)
-        serialized_model = serialize_object(pytorch_model)
-        with open(torch_model_save_loc, "wb") as serialized_model_file:
-            serialized_model_file.write(serialized_model)
-        logger.info("Torch model saved")
-
-        py_minor_version = (sys.version_info.major, sys.version_info.minor)
-        # Check if Python 2 or Python 3 image
-        if base_image == "default":
-            if py_minor_version < (3, 0):
-                img_name = "pytorch-container"
-                if clipper_conn.cm.gpu:
-                    logger.info("Using Python 2 CUDA image")
-                    img_name = "cuda10-pytorch27-container"
-                else:
-                    logger.info("Using Python 2 base image")
-                base_image = "{}/{}:{}".format(
-                    __registry__, img_name, __version__)
-            elif py_minor_version == (3, 5):
-                if clipper_conn.cm.gpu:
-                    logger.info("PyTorch CUDA deployer only supports Python 2.7 and 3.6.")
-                logger.info("Using Python 3.5 base image")
-                base_image = "{}/pytorch35-container:{}".format(
-                    __registry__, __version__)
-            elif py_minor_version == (3, 6):
-                img_name = "pytorch36-container"
-                if clipper_conn.cm.gpu:
-                    logger.info("Using Python 3.6 CUDA image")
-                    img_name = "cuda10-pytorch36-container"
-                    logger.info("building from hsubbaraj/cuda-pytorch-clipper:latest")
-                    base_image = "hsubbaraj/cuda-pytorch-clipper:latest"
-                else:
-                    logger.info("Using Python 3.6 base image")
-                    base_image = "{}/{}:{}".format(
-                    __registry__, img_name, __version__)
-            else:
-                msg = (
-                    "PyTorch deployer only supports Python 2.7, 3.5, and 3.6. "
-                    "Detected {major}.{minor}").format(
-                        major=sys.version_info.major,
-                        minor=sys.version_info.minor)
-                logger.error(msg)
-                # Remove temp files
-                shutil.rmtree(serialization_dir)
-                raise ClipperException(msg)
-
-        # Deploy model
-        clipper_conn.build_and_deploy_model(
-            name, version, input_type, serialization_dir, base_image, labels,
-            registry, num_replicas, batch_size, pkgs_to_install)
-
+        if isinstance(pyspark_model,
+                      pyspark.ml.pipeline.PipelineModel) or isinstance(
+                          pyspark_model, pyspark.ml.base.Model):
+            pyspark_model.save(spark_model_save_loc)
+        else:
+            pyspark_model.save(sc, spark_model_save_loc)
     except Exception as e:
-        raise ClipperException("Error saving torch model: %s" % e)
+        logger.warning("Error saving spark model: %s" % e)
+        raise e
+
+    # extract the pyspark class name. This will be something like
+    # pyspark.mllib.classification.LogisticRegressionModel
+    with open(os.path.join(serialization_dir, "metadata.json"),
+              "w") as metadata_file:
+        json.dump({"model_class": model_class}, metadata_file)
+
+    logger.info("Spark model saved")
+
+    py_minor_version = (sys.version_info.major, sys.version_info.minor)
+    # Check if Python 2 or Python 3 image
+    if base_image == "default":
+        if py_minor_version < (3, 0):
+            logger.info("Using Python 2 base image")
+            base_image = "{}/pyspark-container:{}".format(
+                __registry__, __version__)
+        elif py_minor_version == (3, 5):
+            logger.info("Using Python 3.5 base image")
+            base_image = "{}/pyspark35-container:{}".format(
+                __registry__, __version__)
+        elif py_minor_version == (3, 6):
+            logger.info("Using Python 3.6 base image")
+            base_image = "{}/pyspark36-container:{}".format(
+                __registry__, __version__)
+        else:
+            msg = ("PySpark deployer only supports Python 2.7, 3.5, and 3.6. "
+                   "Detected {major}.{minor}").format(
+                       major=sys.version_info.major,
+                       minor=sys.version_info.minor)
+            logger.error(msg)
+            # Remove temp files
+            shutil.rmtree(serialization_dir)
+            raise ClipperException(msg)
+
+    # Deploy model
+    clipper_conn.build_and_deploy_model(
+        name, version, input_type, serialization_dir, base_image, labels,
+        registry, num_replicas, batch_size, pkgs_to_install)
 
     # Remove temp files
     shutil.rmtree(serialization_dir)

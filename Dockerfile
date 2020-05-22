@@ -1,4 +1,4 @@
-FROM pytorch/pytorch:1.0-cuda10.0-cudnn7-devel
+FROM pytorch/pytorch:1.5-cuda10.1-cudnn7-devel
 
 RUN conda install pyyaml=3.12.*
 
@@ -10,7 +10,7 @@ RUN apt-get install -y  build-essential libssl-dev libffi-dev python-dev
 
 RUN mkdir -p /model \
       && apt-get update -qq \
-      && apt-get install -y -qq libzmq5 libzmq5-dev redis-server libsodium18
+      && apt-get install -y -qq libzmq5 libzmq5-dev redis-server libsodium-dev
 
 RUN pip install cloudpickle==0.5.* pyopenssl pyzmq==17.0.* prometheus_client==0.1.* \
     jsonschema==2.6.* redis==2.10.* psutil==5.4.* flask==0.12.2 \
