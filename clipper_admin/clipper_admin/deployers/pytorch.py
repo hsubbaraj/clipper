@@ -225,11 +225,13 @@ def deploy_pytorch_model(clipper_conn,
                 img_name = "pytorch36-container"
                 if clipper_conn.cm.gpu:
                     logger.info("Using Python 3.6 CUDA image")
+                    logger.info("Getting image from rehan's dockerhub")
                     img_name = "cuda10-pytorch36-container"
+                    base_image = "rdurrani/cuda10.0-pytorch-container:f1922baa35"
                 else:
                     logger.info("Using Python 3.6 base image")
-                base_image = "{}/{}:{}".format(
-                    __registry__, img_name, __version__)
+                    base_image = "{}/{}:{}".format(
+                        __registry__, img_name, __version__)
             else:
                 msg = (
                     "PyTorch deployer only supports Python 2.7, 3.5, and 3.6. "
